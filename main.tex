@@ -21,6 +21,8 @@
 \usepackage{stfloats}
 \usepackage{comment}
 
+\newcommand{\specialcell}[2][c]{%
+  \begin{tabular}[#1]{@{}c@{}}#2\end{tabular}}
 
 \title{\LARGE \bf
 Rubin Observatory Science Pipelines on AWS
@@ -40,7 +42,7 @@ Rubin Observatory Science Pipelines on AWS
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{abstract}
 
-The Legacy Survey of Space and Time\footnote{\url{www.lsst.org}} (LSST) aims to conduct a longitudinal 10 year long survey in which the entire night sky will be imaged every three nights. It is estimated LSST will produce 20TB of data per night and that, in the 10 years of operations it will deliver a total of 500 petabytes (PB) of data. In this paper we claim that the, pervasive in field of astronomy, subset-download-process paradigm of data reprocessing faces significant challenges at LSST data volumes and present the first comprehensive attempt at enabling astronomical image data reduction in the cloud. We focus on executing LSST's Science Pipelines, a collection of image and catalog processing algorithms, on Amazon Web Services (AWS). We describe how we utilize Pegasus Workflow Management System\footnote{\url{https://pegasus.isi.edu}} to describe, plan and execute a data processing pipeline and how we manage computing resources via HTCondor\footnote{\url{https://research.cs.wisc.edu/htcondor/}}. We discuss performance, scalability and cost of deploying on AWS.
+The Legacy Survey of Space and Time\footnote{\url{www.lsst.org}} (LSST) aims to conduct a longitudinal 10 year long survey in which the entire night sky will be imaged every three nights. It is estimated LSST will produce 20TB of raw data per night and that, in the 10 years of operations it will deliver a total of 500 petabytes (PB) of data. In this paper we claim that the, pervasive in field of astronomy, subset-download-process paradigm of data reprocessing faces significant challenges at LSST data volumes and present the first comprehensive attempt at enabling astronomical image data reduction in the cloud. We focus on executing LSST's Science Pipelines, a collection of image and catalog processing algorithms, on Amazon Web Services (AWS). We describe how we utilize Pegasus Workflow Management System\footnote{\url{https://pegasus.isi.edu}} to describe, plan and execute a data processing pipeline and how we manage computing resources via HTCondor\footnote{\url{https://research.cs.wisc.edu/htcondor/}}. We discuss performance, scalability and cost of deploying on AWS.
 \end{abstract}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -87,11 +89,12 @@ Datastore implements \href{https://aws.amazon.com/s3/}{Simple Storage Service (S
 
 \href{https://aws.amazon.com/rds/}{Relational Database Service (RDS)} is the AWS cloud service that launches and configures databases with ease. PostgreSQL was chosen as the DBMS backend for the Registry. Primary drivers behind PostgreSQL were the ease of deploying in RDS, the common use of PostgreSQL as a Virtual Observatory (VO) Table Access Protocol (TAP) backend, no additional licensing fees usually associated with proprietary software and PostgreSQL's off-the-shelf support for spatial primitives needed for astronomy. The RDS databases can be backed up into snapshots as well as exported to downloadable files on S3.
 
-Elastic Compute Cloud (EC2) is used to acquire compute resources.  EC2 service uses virtualization technology to deliver a variety of different pre-configured instance types optimized for different use cases. Within each instance type there are several different instance sizes comprised of varying combinations of CPU, memory, storage, and networking capacity. Amazon Machine Image (AMI) provides the information required to launch an instance and we provide pre-built CentOS AMIs that contain and configure the required parts of the technology stack fo both master and the workers. 
+Elastic Compute Cloud (EC2) is used to acquire compute resources.  EC2 service uses virtualization technology to deliver a variety of different pre-configured instance types optimized for different use cases. Within each instance type there are several different instance sizes comprised of varying combinations of CPU, memory, storage, and networking capacity. Amazon Machine Image (AMI) provides the information required to launch an instance and we provide pre-built CentOS AMIs that contain and configure the required parts of the technology stack fo both master and the workers. EC2 differentiates between "on-demand" and "spot" instances. On demand instances are allocated to users until they are de-allocated by the user, while spot instances are allocated to the user but can de-allocated at any time with a 2 minute warning. Spot instances prices change based on the demand but are on average much cheaper than on-demand instances.
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Example Workflow}
 
-The example workflow is based off of the well understood, well characterized HSC Release Candidate dataset\footnote{\url{https://jira.lsstcorp.org/browse/DM-11345}}. This dataset is reprocessed using Rubin Obs. compute resources every two weeks in order to characterize the scientific validity and performance of the algorithms as they are being developed. The workflow consists of initialization, instrument signature removal, characterization and calibration jobs. Initialization job is responsible for correctly setting up metadata in the Registry. There are 6787 instrument signature removal (ISR) jobs. ISR removes image features that are the results of instrument flaws. Characterization consists of modeling the background, point spread function (PSF), repairing cosmic ray traces, detecting and measuring bright sources and measuring aperture correction. There are, again, 6787 characterize tasks in the workflow. Finally the calibration tasks, using PSF and aperture correction from previous step, detect all sources on the image and perform astrometry and photometry on the image. The workflow is shown on \ref{fig:demo-workflow}
+The example workflow is based off of the well understood, well characterized HSC Release Candidate dataset\footnote{\url{https://jira.lsstcorp.org/browse/DM-11345}} tract 9516. This dataset is reprocessed using Rubin Obs. compute resources every two weeks in order to characterize the scientific validity and performance of the algorithms as they are being developed. The workflow consists of initialization, instrument signature removal, characterization and calibration jobs. Initialization job is responsible for correctly setting up metadata in the Registry. There are 6787 instrument signature removal (ISR) jobs. ISR removes image features that are the results of instrument flaws. Characterization consists of modeling the background, point spread function (PSF), repairing cosmic ray traces, detecting and measuring bright sources and measuring aperture correction. There are, again, 6787 characterize tasks in the workflow. Finally the calibration tasks, using PSF and aperture correction from previous step, detect all sources on the image and perform astrometry and photometry on the image. The workflow is shown on \ref{fig:demo-workflow}
 
 \begin{figure}[htb]
 \centering
@@ -100,14 +103,48 @@ The example workflow is based off of the well understood, well characterized HSC
 \label{fig:demo-workflow}
 \end{figure}
 
-The total size of the output data is approximately 2TB. The dataset represents approximately 10\% of LSST's nightly data volume. 
+The total size of the input data is 0.2TB and the size of output data is approximately 2.7TB. In number of visits processed this represents approximately 11\% of the number or expected Vera Rubin telescope visits. Because each LSST image will be approximately twice the size of a single HSC image, in terms of data volume the example workflow represents approximately 2\% of a night. The scaling between processed data volume and number of visits is a function of observed part of the sky, regions with many objects will on average take longer to process, and the scheduling overheads which themselves are a function of clustering and other execution optimization parameters. Figure \ref{fig:raw2calexp.png} shows the comparison between the raw input image and a calibrated exposure.
 
-maybe a nice figure of input, raw vs output calibrated exp (in progress)
+\begin{figure}[htb]
+\centering
+\includegraphics[width=\columnwidth]{figures/raw2calexp.png}
+\caption{Raw image (left) and the calibrated exposure (right), the final product of the example workflow.}
+\label{fig:demo-workflow}
+\end{figure}
+
 
 \section{Performance, scalability and cost}
+
+Example workflow was tested against multiple different instance types and instance sizes. The tests were performed on on-demand and on spot instance types. Results are summarized in table \ref{tbl:cost}. The execution time is the cumulative value of execution times of all Tasks in the Quantum Graph and the scheduling and execution overhead. The initialization job takes on average 22-30 minutes. This time should not be considered when scaling the execution times to larger datasets because the initialization job is required to run only once per each new output collection and thus would not be run again for any subsequent processing steps or would it be run multiple times if the DAG contained more Tasks. 
+
+\begin{table*}[t]
+  \centering
+\begin{tabular}{c|c|c|c|c|c|c }
+Run name & Type and size & Instance count & Cost & Wall Time & Spot & Comment \\
+\hline 
+20200302T222936  & c5.2xlarge    & 25   & 26.19  & 4h2m   & No & Wall time is wrong. \\
+20200227T232007  & c5.2xlarge    & 50   & 26.72  & 1h54m  & No & - \\
+20200228T014417  & c5.2xlarge    & 50   & 25.78  & 1h48m  & No & Optimal cluster size. \\
+20200302T180554  & c5.2xlarge    & 100  & 47.08  & 1h48m  & No & Under-subscribed cluster. \\
+20200302T210301  & c5.2xlarge    & 100  & 32.72  & 1h18m  & No & \specialcell{Better than 10301, but still \\ not optimal cluster size} \\
+20200305T182023  & c5.xlarge     & 25   & 23.38  & 5h45m  & No & Overestimated pricing. \\ 
+20200305T182023  & c5.xlarge     & 50   & 27.43  & 3h41m  & No & Timings and cost slightly off. \\
+20200306T062555  & c5.xlarge     & 100  & 27.36  & 2h2m   & No & - \\
+20200309T135739  & m5.xlarge     & 25   & 24.72  & 5h35m  & No & - \\
+20200309T194101  & m5.xlarge     & 50   & 25.76  & 3h8m   & No & - \\
+20200309T225436  & m5.xlarge     & 100  & 19.40  & 2h39m  & No & \specialcell{Compute resources accidentally not allocated for \\ 32m43s after the jobs got scheduled.}\\
+20200310T191539  & m5.large      & 200  & 28.21 & 1h58m   & Yes & - \\
+20200310T183810  & c5.2xlarge    & 50   & 6.24  & 1h59m   & Yes & - \\
+\end{tabular}
+\end{table*}
+
+
+Scaling between different number of visits is approximately linear.
  - runs in an hour
  
  - costs 6\$
+ 
+ - make a plot how it scales with N instances, plot how it handles larger instance sizes
  
  - andy should really pay me more
 
@@ -116,6 +153,8 @@ maybe a nice figure of input, raw vs output calibrated exp (in progress)
 - being optimal, or even comparable to LSST performance, is very difficult for general graphs because characterizing resource requirements is difficult
 
 - bandwidth is really not a problem because distributive properties of S3
+
+- instance size vs instance type tradeoff is a function of task resource requirements
 
 - there are, as of yet, no solutions that allow one to specify, launch and target new resources especially tailored to that specific type of job. Only automatic resource deallocation is usually implemented, no automatic allocation. 
 
